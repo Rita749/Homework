@@ -194,10 +194,10 @@ class XORNeuralNetworkDemo:
            • AND(OR, NAND) = XOR
         
         3. РЕЗУЛЬТАТ для всех комбинаций:
-           • (0,0): OR=0, NAND=1 → AND(0,1)=0 ✓
-           • (0,1): OR=1, NAND=1 → AND(1,1)=1 ✓  
-           • (1,0): OR=1, NAND=1 → AND(1,1)=1 ✓
-           • (1,1): OR=1, NAND=0 → AND(1,0)=0 ✓
+           • (0,0): OR=0, NAND=1 → AND(0,1)=0 
+           • (0,1): OR=1, NAND=1 → AND(1,1)=1  
+           • (1,0): OR=1, NAND=1 → AND(1,1)=1 
+           • (1,1): OR=1, NAND=0 → AND(1,0)=0 
         """
         
         ax3.text(0.1, 0.9, explanation_text, fontsize=12, va='top', 
@@ -244,4 +244,5 @@ def main():
     print("\nДемонстрация завершена!")
 
 if __name__ == "__main__":
+
     main()

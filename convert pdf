@@ -1,0 +1,579 @@
+import os
+import sys
+import io
+import tempfile
+import datetime
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+import fitz  # PyMuPDF
+
+# Константы путей
+WORKING_FOLDER = "/home/User/Desktop/untitled"
+INPUT_PDF = os.path.join(WORKING_FOLDER, "test3.pdf")
+OUTPUT_PDF = os.path.join(WORKING_FOLDER, "tttA4_bw.pdf")
+
+def ensure_working_folder():
+    """Создает рабочую папку если она не существует"""
+    if not os.path.exists(WORKING_FOLDER):
+        os.makedirs(WORKING_FOLDER)
+        print(f"📁 Создана папка: {WORKING_FOLDER}")
+    return WORKING_FOLDER
+
+def check_input_file():
+    """Проверяет наличие входного файла"""
+    if not os.path.exists(INPUT_PDF):
+        print(f"❌ Входной файл не найден: {INPUT_PDF}")
+        print("📋 Файлы в папке:")
+        if os.path.exists(WORKING_FOLDER):
+            for file in os.listdir(WORKING_FOLDER):
+                print(f"   📄 {file}")
+        return False
+    return True
+
+def pdf_to_high_quality_images(pdf_path, dpi=300):
+    """
+    Конвертирует PDF в высококачественные изображения
+    """
+    images = []
+    doc = fitz.open(pdf_path)
+    
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        # Увеличиваем DPI для лучшего качества
+        mat = fitz.Matrix(dpi/72, dpi/72)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img_data = pix.tobytes("ppm")
+        img = Image.open(io.BytesIO(img_data))
+        images.append(img)
+    
+    doc.close()
+    return images
+
+def enhance_grayscale(image):
+    """
+    Улучшает изображение в оттенках серого с сохранением качества
+    """
+    # Конвертируем в оттенки серого (сохраняем все детали)
+    gray_image = image.convert('L')
+    
+    # Улучшаем контрастность
+    enhancer = ImageEnhance.Contrast(gray_image)
+    gray_image = enhancer.enhance(1.2)
+    
+    # Улучшаем резкость
+    enhancer = ImageEnhance.Sharpness(gray_image)
+    gray_image = enhancer.enhance(1.1)
+    
+    return gray_image
+
+def resize_to_a4_high_quality(image):
+    """
+    Изменяет размер изображения под формат A4 с максимальным качеством
+    """
+    a4_width, a4_height = A4
+    
+    # Рассчитываем размер с учетом полей (5% с каждой стороны)
+    target_width = int(a4_width * 0.95)
+    target_height = int(a4_height * 0.95)
+    
+    # Сохраняем пропорции
+    img_ratio = image.width / image.height
+    target_ratio = target_width / target_height
+    
+    if img_ratio > target_ratio:
+        # Изображение шире
+        new_width = target_width
+        new_height = int(target_width / img_ratio)
+    else:
+        # Изображение выше
+        new_height = target_height
+        new_width = int(target_height * img_ratio)
+    
+    # Используем высококачественное масштабирование
+    resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # Создаем белый фон A4
+    background = Image.new('L', (int(a4_width), int(a4_height)), 255)
+    
+    # Центрируем изображение на фоне
+    x_offset = (background.width - resized_image.width) // 2
+    y_offset = (background.height - resized_image.height) // 2
+    background.paste(resized_image, (x_offset, y_offset))
+    
+    return background
+
+def images_to_high_quality_pdf(images, output_path, quality=95):
+    """
+    Конвертирует список изображений в высококачественный PDF
+    """
+    c = canvas.Canvas(output_path, pagesize=A4)
+    
+    for i, img in enumerate(images):
+        print(f"Добавление страницы {i+1} в PDF...")
+        
+        # Сохраняем временное изображение в высоком качестве
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+            temp_path = temp_file.name
+            # Сохраняем с максимальным качеством
+            img.save(temp_path, 'PNG', optimize=True, quality=quality)
+        
+        try:
+            img_reader = ImageReader(temp_path)
+            img_width, img_height = img_reader.getSize()
+            
+            # Масштабируем изображение под размер A4
+            a4_width, a4_height = A4
+            scale = min(a4_width / img_width, a4_height / img_height)
+            scaled_width = img_width * scale
+            scaled_height = img_height * scale
+            
+            # Центрируем изображение
+            x = (a4_width - scaled_width) / 2
+            y = (a4_height - scaled_height) / 2
+            
+            c.drawImage(img_reader, x, y, scaled_width, scaled_height, preserveAspectRatio=True)
+            c.showPage()
+        
+        finally:
+            # Удаляем временный файл
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+    
+    c.save()
+
+def optimize_for_text_and_images(image):
+    """
+    Оптимизирует изображение для лучшего отображения текста и графики
+    """
+    # Легкое повышение резкости для текста
+    sharpened = image.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=3))
+    
+    # Автоматическая коррекция контраста
+    optimized = ImageOps.autocontrast(sharpened, cutoff=2)
+    
+    return optimized
+
+def convert_pdf_to_grayscale_a4(input_pdf, output_pdf, dpi=300, enhance_quality=True):
+    """
+    Основная функция конвертации PDF в оттенки серого формата A4
+    """
+    print(f"🔄 Конвертация: {os.path.basename(input_pdf)} -> {os.path.basename(output_pdf)}")
+    print(f"📊 Качество: {dpi} DPI")
+    
+    try:
+        # Конвертируем PDF в высококачественные изображения
+        print("📄 Извлечение страниц из PDF...")
+        images = pdf_to_high_quality_images(input_pdf, dpi=dpi)
+        
+        processed_images = []
+        
+        # Обрабатываем каждое изображение
+        for i, img in enumerate(images):
+            print(f"⚙️ Обработка страницы {i+1}/{len(images)}...")
+            
+            # Конвертируем в оттенки серого с улучшением качества
+            gray_img = enhance_grayscale(img)
+            
+            # Дополнительная оптимизация для текста
+            if enhance_quality:
+                gray_img = optimize_for_text_and_images(gray_img)
+            
+            # Изменяем размер под A4 с сохранением качества
+            a4_img = resize_to_a4_high_quality(gray_img)
+            
+            processed_images.append(a4_img)
+        
+        # Создаем высококачественный PDF
+        print("📑 Создание PDF в оттенках серого...")
+        images_to_high_quality_pdf(processed_images, output_pdf, quality=95)
+        
+        # Проверяем размер файла
+        original_size = os.path.getsize(input_pdf) / (1024 * 1024)  # в MB
+        final_size = os.path.getsize(output_pdf) / (1024 * 1024)    # в MB
+        print(f"✅ Конвертация завершена: {output_pdf}")
+        print(f"📦 Размер исходного файла: {original_size:.2f} MB")
+        print(f"📦 Размер конечного файла: {final_size:.2f} MB")
+        print(f"📈 Изменение размера: {final_size - original_size:+.2f} MB")
+        
+        return True, original_size, final_size
+        
+    except Exception as e:
+        print(f"❌ Ошибка при конвертации: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, 0, 0
+
+def create_pdf_preview_images(pdf_path, output_folder, max_pages=3):
+    """
+    Создает превью страниц PDF для вставки в документацию
+    """
+    preview_images = []
+    try:
+        doc = fitz.open(pdf_path)
+        
+        # Ограничиваем количество страниц для превью
+        pages_to_process = min(len(doc), max_pages)
+        
+        for page_num in range(pages_to_process):
+            page = doc.load_page(page_num)
+            # Используем меньшее разрешение для превью
+            mat = fitz.Matrix(150/72, 150/72)  # 150 DPI для превью
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            
+            # Сохраняем превью как PNG
+            preview_path = os.path.join(output_folder, f"preview_page_{page_num+1}.png")
+            pix.save(preview_path)
+            preview_images.append(preview_path)
+            
+        doc.close()
+        
+    except Exception as e:
+        print(f"⚠️ Ошибка создания превью: {e}")
+    
+    return preview_images
+
+def create_technical_documentation(original_size, final_size):
+    """
+    Создает техническую документацию в формате Word со схемами, диаграммами и примерами файлов
+    """
+    try:
+        from docx import Document
+        from docx.shared import Inches, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        print("📦 Установка python-docx...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "python-docx"])
+        from docx import Document
+        from docx.shared import Inches, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    
+    doc = Document()
+    
+    # Настраиваем поля документа
+    sections = doc.sections
+    for section in sections:
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2)
+        section.right_margin = Cm(2)
+    
+    # Титульная страница
+    title = doc.add_heading('Техническая документация: PDF to A4 Grayscale Converter', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_paragraph(f'Рабочая папка: {WORKING_FOLDER}')
+    doc.add_paragraph(f'Дата создания: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}')
+    doc.add_paragraph('Версия: 2.0')
+    
+    # Добавляем информацию о файлах на титульную страницу
+    doc.add_paragraph().add_run("Файлы проекта:").bold = True
+    doc.add_paragraph(f"• Исходный PDF: {os.path.basename(INPUT_PDF)} ({original_size:.2f} MB)")
+    doc.add_paragraph(f"• Результат: {os.path.basename(OUTPUT_PDF)} ({final_size:.2f} MB)")
+    doc.add_paragraph(f"• Изменение размера: {final_size - original_size:+.2f} MB")
+    
+    doc.add_page_break()
+    
+    # Содержание
+    doc.add_heading('Содержание', level=1)
+    sections = [
+        "1. Обзор системы",
+        "2. Примеры файлов", 
+        "3. Архитектура системы",
+        "4. Блок-схема процесса конвертации",
+        "5. Детальное описание функций",
+        "6. Настройки качества",
+        "7. Информация о выполнении"
+    ]
+    
+    for section in sections:
+        doc.add_paragraph(section)
+    
+    doc.add_page_break()
+    
+    # 1. Обзор системы
+    doc.add_heading('1. Обзор системы', level=1)
+    doc.add_paragraph('Система автоматической конвертации PDF документов в черно-белый формат A4 с высоким качеством.')
+    
+    doc.add_heading('1.1 Основные функции', level=2)
+    features = [
+        'Конвертация PDF в черно-белый формат',
+        'Приведение размера к стандарту A4',
+        'Высококачественная обработка изображений',
+        'Оптимизация для текстовых документов',
+        'Автоматическое сохранение в указанную папку'
+    ]
+    for feature in features:
+        doc.add_paragraph(feature, style='List Bullet')
+    
+    # 2. Примеры файлов
+    doc.add_heading('2. Примеры файлов', level=1)
+    
+    # Создаем временную папку для превью
+    temp_preview_dir = os.path.join(WORKING_FOLDER, "temp_previews")
+    if not os.path.exists(temp_preview_dir):
+        os.makedirs(temp_preview_dir)
+    
+    # Добавляем информацию об исходном файле
+    doc.add_heading('2.1 Исходный PDF файл', level=2)
+    doc.add_paragraph(f'Файл: {os.path.basename(INPUT_PDF)}')
+    doc.add_paragraph(f'Размер: {original_size:.2f} MB')
+    doc.add_paragraph(f'Путь: {INPUT_PDF}')
+    
+    # Получаем информацию о PDF
+    try:
+        original_doc = fitz.open(INPUT_PDF)
+        page_count = len(original_doc)
+        doc.add_paragraph(f'Количество страниц: {page_count}')
+        original_doc.close()
+    except Exception as e:
+        doc.add_paragraph(f'Информация о PDF недоступна: {e}')
+        page_count = 0
+    
+    # Создаем и вставляем превью исходного PDF
+    if page_count > 0:
+        original_previews = create_pdf_preview_images(INPUT_PDF, temp_preview_dir)
+        if original_previews:
+            doc.add_paragraph('Превью исходного PDF:')
+            for i, preview_path in enumerate(original_previews):
+                try:
+                    if os.path.exists(preview_path):
+                        doc.add_picture(preview_path, width=Inches(4.5))
+                        doc.add_paragraph(f'Страница {i + 1} (исходная)')
+                        doc.add_paragraph()  # Добавляем отступ
+                except Exception as e:
+                    doc.add_paragraph(f'⚠️ Не удалось вставить превью страницы {i + 1}: {e}')
+    
+    doc.add_heading('2.2 Результат конвертации', level=2)
+    doc.add_paragraph(f'Файл: {os.path.basename(OUTPUT_PDF)}')
+    doc.add_paragraph(f'Размер: {final_size:.2f} MB')
+    doc.add_paragraph(f'Путь: {OUTPUT_PDF}')
+    
+    change_mb = final_size - original_size
+    change_percent = (change_mb / original_size * 100) if original_size > 0 else 0
+    doc.add_paragraph(f'Изменение размера: {change_mb:+.2f} MB ({change_percent:+.1f}%)')
+    
+    # Создаем и вставляем превью результата
+    if page_count > 0:
+        result_previews = create_pdf_preview_images(OUTPUT_PDF, temp_preview_dir)
+        if result_previews:
+            doc.add_paragraph('Превью результата (Ч/Б A4):')
+            for i, preview_path in enumerate(result_previews):
+                try:
+                    if os.path.exists(preview_path):
+                        doc.add_picture(preview_path, width=Inches(4.5))
+                        doc.add_paragraph(f'Страница {i + 1} (Ч/Б A4)')
+                        doc.add_paragraph()  # Добавляем отступ
+                except Exception as e:
+                    doc.add_paragraph(f'⚠️ Не удалось вставить превью страницы {i + 1}: {e}')
+    
+    # Сравнительная таблица - ИСПРАВЛЕННАЯ ВЕРСИЯ
+    doc.add_heading('2.3 Сравнение файлов', level=2)
+    
+    # Создаем таблицу с правильным количеством строк
+    comparison_data = [
+        ['Параметр', 'Исходный файл', 'Результат'],
+        ['Размер файла', f'{original_size:.2f} MB', f'{final_size:.2f} MB'],
+        ['Изменение размера', '-', f'{change_mb:+.2f} MB ({change_percent:+.1f}%)'],
+        ['Формат', 'Цветной PDF', 'Ч/Б A4 PDF'],
+        ['Количество страниц', f'{page_count}', f'{page_count}']
+    ]
+    
+    # Создаем таблицу с правильным количеством строк и колонок
+    comparison_table = doc.add_table(rows=len(comparison_data), cols=3)
+    
+    # Заполняем таблицу
+    for i, row_data in enumerate(comparison_data):
+        for j, cell_data in enumerate(row_data):
+            if j < len(comparison_table.rows[i].cells):
+                comparison_table.rows[i].cells[j].text = cell_data
+    
+    # Применяем стиль к таблице
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    comparison_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    comparison_table.style = 'Light Grid Accent 1'
+    
+    doc.add_page_break()
+    
+    # 3. Архитектура системы
+    doc.add_heading('3. Архитектура системы', level=1)
+    
+    doc.add_heading('3.1 Компоненты системы', level=2)
+    components = [
+        ("PyMuPDF (fitz)", "Чтение PDF и извлечение страниц с высоким DPI"),
+        ("Pillow (PIL)", "Обработка и конвертация изображений, улучшение качества"),
+        ("ReportLab", "Генерация выходного PDF с размерами A4"),
+        ("Tempfile", "Управление временными файлами процесса конвертации")
+    ]
+    
+    for component, description in components:
+        p = doc.add_paragraph()
+        p.add_run(f"{component}: ").bold = True
+        p.add_run(description)
+    
+    # 4. Блок-схема процесса конвертации
+    doc.add_heading('4. Блок-схема процесса конвертации', level=1)
+    
+    flowchart = """
+    ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+    │   Входной PDF   │───▶│ Извлечение       │───▶│ Конвертация      │
+    │                 │    │ страниц          │    │ в оттенки серого │
+    └─────────────────┘    └──────────────────┘    └──────────────────┘
+                                                                │
+    ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+    │   Выходной PDF  │◀───│ Сборка PDF       │◀───│ Масштабирование  │
+    │    A4 Ч/Б       │    │ A4               │    │ под A4           │
+    └─────────────────┘    └──────────────────┘    └──────────────────┘
+    """
+    
+    doc.add_paragraph(flowchart)
+    
+    # 5. Детальное описание функций
+    doc.add_heading('5. Детальное описание функций', level=1)
+    
+    functions_info = [
+        {
+            'name': 'pdf_to_high_quality_images()',
+            'params': 'pdf_path, dpi=300',
+            'desc': 'Конвертирует PDF в набор изображений с заданным разрешением'
+        },
+        {
+            'name': 'enhance_grayscale()',
+            'params': 'image',
+            'desc': 'Улучшает качество черно-белого изображения'
+        },
+        {
+            'name': 'resize_to_a4_high_quality()', 
+            'params': 'image',
+            'desc': 'Масштабирует изображение под формат A4'
+        }
+    ]
+    
+    for func in functions_info:
+        doc.add_heading(func['name'], level=2)
+        doc.add_paragraph(f"Параметры: {func['params']}")
+        doc.add_paragraph(f"Назначение: {func['desc']}")
+    
+    # 6. Настройки качества
+    doc.add_heading('6. Настройки качества', level=1)
+    
+    doc.add_heading('6.1 Параметры DPI', level=2)
+    dpi_settings = [
+        ("300 DPI", "Высокое качество для текстовых документов"),
+        ("200 DPI", "Баланс качества и размера файла"),
+        ("400 DPI", "Максимальное качество для мелких деталей")
+    ]
+    
+    for dpi, desc in dpi_settings:
+        p = doc.add_paragraph()
+        p.add_run(f"{dpi}: ").bold = True
+        p.add_run(desc)
+    
+    # 7. Информация о выполнении
+    doc.add_heading('7. Информация о выполнении', level=1)
+    
+    # Создаем таблицу с правильным количеством строк
+    info_data = [
+        ["Рабочая папка", WORKING_FOLDER],
+        ["Входной файл", INPUT_PDF],
+        ["Выходной файл", OUTPUT_PDF],
+        ["Размер исходного файла", f"{original_size:.2f} MB"],
+        ["Размер результата", f"{final_size:.2f} MB"],
+        ["Изменение размера", f"{change_mb:+.2f} MB ({change_percent:+.1f}%)"],
+        ["Дата выполнения", datetime.datetime.now().strftime("%Y-%m-%d %H:%M")]
+    ]
+    
+    info_table = doc.add_table(rows=len(info_data), cols=2)
+    info_table.style = 'Light Grid Accent 1'
+    
+    for i, (key, value) in enumerate(info_data):
+        if i < len(info_table.rows):
+            info_table.rows[i].cells[0].text = key
+            info_table.rows[i].cells[1].text = value
+    
+    # Очищаем временные файлы превью
+    try:
+        import shutil
+        if os.path.exists(temp_preview_dir):
+            shutil.rmtree(temp_preview_dir)
+            print(f"🧹 Очищены временные файлы превью: {temp_preview_dir}")
+    except Exception as e:
+        print(f"⚠️ Не удалось очистить временные файлы: {e}")
+    
+    # Сохраняем документ
+    docx_filename = os.path.join(WORKING_FOLDER, "Technical_Documentation.docx")
+    doc.save(docx_filename)
+    
+    return docx_filename
+
+def main():
+    """
+    Основная функция программы
+    """
+    print("=" * 70)
+    print("🖨️  КОНВЕРТЕР PDF В A4 ЧЕРНО-БЕЛЫЙ ФОРМАТ")
+    print("=" * 70)
+    print(f"📁 Рабочая папка: {WORKING_FOLDER}")
+    print(f"📄 Входной файл: {INPUT_PDF}")
+    print(f"💾 Выходной файл: {OUTPUT_PDF}")
+    print()
+    
+    # Создаем рабочую папку
+    ensure_working_folder()
+    
+    # Проверяем входной файл
+    if not check_input_file():
+        print(f"\n💡 Поместите PDF файл с именем 'input.pdf' в папку: {WORKING_FOLDER}")
+        return
+    
+    # Выбор качества
+    print("\n🎯 Выберите качество конвертации:")
+    print("1 - Высокое (300 DPI, для текстовых документов)")
+    print("2 - Среднее (200 DPI, баланс качества/размера)")
+    print("3 - Максимальное (400 DPI, для мелких деталей)")
+    
+    choice = input("Ваш выбор (1-3): ").strip()
+    dpi_map = {'1': 300, '2': 200, '3': 400}
+    dpi = dpi_map.get(choice, 300)
+    
+    print(f"\n🚀 Начало конвертации с качеством {dpi} DPI...")
+    
+    # Выполняем конвертацию
+    success, original_size, final_size = convert_pdf_to_grayscale_a4(INPUT_PDF, OUTPUT_PDF, dpi=dpi)
+    
+    if success:
+        print("\n✅ КОНВЕРТАЦИЯ УСПЕШНО ЗАВЕРШЕНА!")
+        print(f"📁 Результат сохранен в: {OUTPUT_PDF}")
+        
+        # Создаем документацию
+        print("\n" + "=" * 70)
+        print("📚 СОЗДАНИЕ ТЕХНИЧЕСКОЙ ДОКУМЕНТАЦИИ")
+        print("=" * 70)
+        
+        try:
+            doc_file = create_technical_documentation(original_size, final_size)
+            print(f"✅ Документация создана: {doc_file}")
+            
+            # Показываем содержимое папки
+            print(f"\n📋 Содержимое папки {WORKING_FOLDER}:")
+            for file in os.listdir(WORKING_FOLDER):
+                file_path = os.path.join(WORKING_FOLDER, file)
+                size = os.path.getsize(file_path) / (1024 * 1024)
+                file_type = "📄" if file.endswith('.pdf') else "📝" if file.endswith('.docx') else "📁"
+                print(f"   {file_type} {file} ({size:.2f} MB)")
+                
+        except Exception as e:
+            print(f"❌ Ошибка создания документации: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print(f"\n🎉 ВСЕ ЗАДАЧИ ВЫПОЛНЕНЫ!")
+        print(f"📁 Папка с результатами: {WORKING_FOLDER}")
+        
+    else:
+        print("\n💥 Конвертация не удалась!")
+
+if __name__ == "__main__":
+    main()
